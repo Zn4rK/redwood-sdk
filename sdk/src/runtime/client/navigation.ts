@@ -64,6 +64,17 @@ type PendingScroll = {
   behavior: ScrollBehavior;
 };
 
+type ScrollPosition = {
+  x: number;
+  y: number;
+};
+
+const HISTORY_STATE_SCROLL_KEY = "__rwsdk_scroll_key";
+const historyEntryKeyPrefix = Math.random().toString(36).slice(2);
+const scrollPositions = new Map<string, ScrollPosition>();
+let currentHistoryEntryKey: string | null = null;
+let nextHistoryEntryKey = 0;
+
 // Scroll intent recorded at navigation time and applied post-commit in
 // onHydrated, so the new scroll position aligns with the new DOM rather
 // than flashing on top of the old one.
@@ -101,9 +112,20 @@ export async function navigate(
   const url = new URL(href, window.location.href);
 
   if (options.history === "push") {
-    window.history.pushState({ path: href }, "", url);
+    const historyEntryKey = createHistoryEntryKey();
+    currentHistoryEntryKey = historyEntryKey;
+    window.history.pushState(
+      { path: href, [HISTORY_STATE_SCROLL_KEY]: historyEntryKey },
+      "",
+      url,
+    );
   } else {
-    window.history.replaceState({ path: href }, "", url);
+    const historyEntryKey = ensureCurrentHistoryEntryKey();
+    window.history.replaceState(
+      { path: href, [HISTORY_STATE_SCROLL_KEY]: historyEntryKey },
+      "",
+      url,
+    );
   }
 
   currentPathKey = getUrlPathKey(url);
@@ -114,6 +136,9 @@ export async function navigate(
 
   if (scrollToTop) {
     pendingScroll = { x: 0, y: 0, behavior: scrollBehavior };
+    saveScrollPosition(0, 0);
+  } else {
+    saveScrollPosition(window.scrollX, window.scrollY);
   }
 
   await options.onNavigate?.();
@@ -121,16 +146,65 @@ export async function navigate(
   await globalThis.__rsc_callServer(null, null, "navigation");
 }
 
-function saveScrollPosition(x: number, y: number) {
+function createHistoryEntryKey() {
+  nextHistoryEntryKey += 1;
+  return `${historyEntryKeyPrefix}:${nextHistoryEntryKey}`;
+}
+
+function getHistoryState() {
+  const state = window.history.state;
+  return state && typeof state === "object"
+    ? (state as Record<string, unknown>)
+    : {};
+}
+
+function getHistoryEntryKey(state = getHistoryState()) {
+  const key = state[HISTORY_STATE_SCROLL_KEY];
+  return typeof key === "string" ? key : null;
+}
+
+function ensureCurrentHistoryEntryKey() {
+  const state = getHistoryState();
+  const existingKey = getHistoryEntryKey(state);
+  if (existingKey) {
+    currentHistoryEntryKey = existingKey;
+    return existingKey;
+  }
+
+  const historyEntryKey = createHistoryEntryKey();
+  currentHistoryEntryKey = historyEntryKey;
   window.history.replaceState(
-    {
-      ...window.history.state,
-      scrollX: x,
-      scrollY: y,
-    },
+    { ...state, [HISTORY_STATE_SCROLL_KEY]: historyEntryKey },
     "",
     window.location.href,
   );
+  return historyEntryKey;
+}
+
+function getLegacyScrollPosition(state = getHistoryState()) {
+  const x = state.scrollX;
+  const y = state.scrollY;
+  if (typeof x === "number" || typeof y === "number") {
+    return {
+      x: typeof x === "number" ? x : 0,
+      y: typeof y === "number" ? y : 0,
+    };
+  }
+  return null;
+}
+
+function getSavedScrollPosition(state = getHistoryState()) {
+  const historyEntryKey = getHistoryEntryKey(state) ?? currentHistoryEntryKey;
+  const savedPosition = historyEntryKey
+    ? scrollPositions.get(historyEntryKey)
+    : undefined;
+  return savedPosition ?? getLegacyScrollPosition(state);
+}
+
+function saveScrollPosition(x: number, y: number) {
+  const historyEntryKey =
+    currentHistoryEntryKey ?? ensureCurrentHistoryEntryKey();
+  scrollPositions.set(historyEntryKey, { x, y });
 }
 
 function applyPendingScroll() {
@@ -189,18 +263,17 @@ export function initClientNavigation(opts: ClientNavigationOptions = {}) {
   // committed — which causes the old DOM to flash at the new scroll offset.
   history.scrollRestoration = "manual";
 
-  // If we're booting onto an entry that already has a saved scroll (e.g.
-  // a reload after scrolling, or a back-forward cache restore), queue that
-  // position so the first commit lands us where the user left off.
-  const bootState = window.history.state;
-  if (
-    bootState &&
-    (typeof bootState.scrollX === "number" ||
-      typeof bootState.scrollY === "number")
-  ) {
+  // If we're booting onto an entry that already has a saved scroll from an
+  // older runtime, queue that position so the first commit lands us where the
+  // user left off.
+  const bootState = getHistoryState();
+  const bootHistoryEntryKey = ensureCurrentHistoryEntryKey();
+  const bootScrollPosition = getSavedScrollPosition(bootState);
+  if (bootScrollPosition) {
+    scrollPositions.set(bootHistoryEntryKey, bootScrollPosition);
     pendingScroll = {
-      x: bootState.scrollX ?? 0,
-      y: bootState.scrollY ?? 0,
+      x: bootScrollPosition.x,
+      y: bootScrollPosition.y,
       behavior: "instant",
     };
   }
@@ -225,6 +298,11 @@ export function initClientNavigation(opts: ClientNavigationOptions = {}) {
   );
 
   window.addEventListener("popstate", async function handlePopState() {
+    const state = getHistoryState();
+    const historyEntryKey = ensureCurrentHistoryEntryKey();
+    const savedScrollPosition = getSavedScrollPosition(state) ?? { x: 0, y: 0 };
+    scrollPositions.set(historyEntryKey, savedScrollPosition);
+
     const nextPathKey = getLocationPathKey();
     const isHashOnlyChange = nextPathKey === currentPathKey;
     currentPathKey = nextPathKey;
@@ -233,29 +311,22 @@ export function initClientNavigation(opts: ClientNavigationOptions = {}) {
       return;
     }
 
-    const state = window.history.state ?? {};
     pendingScroll = {
-      x: typeof state.scrollX === "number" ? state.scrollX : 0,
-      y: typeof state.scrollY === "number" ? state.scrollY : 0,
+      x: savedScrollPosition.x,
+      y: savedScrollPosition.y,
       behavior: "instant",
     };
     await opts.onNavigate?.();
     await globalThis.__rsc_callServer(null, null, "navigation");
   });
 
-  // Persist the user's scroll position on the current history entry so
-  // that back/forward navigation can restore it accurately once the new
-  // RSC payload commits. Coalesced via rAF to avoid thrashing replaceState.
-  let scrollSaveScheduled = false;
+  // Track the user's scroll position in memory so back/forward navigation can
+  // restore it after the RSC payload commits. Avoid writing on every scroll via
+  // history.replaceState because browsers throttle frequent history updates.
   window.addEventListener(
     "scroll",
     () => {
-      if (scrollSaveScheduled) return;
-      scrollSaveScheduled = true;
-      requestAnimationFrame(() => {
-        scrollSaveScheduled = false;
-        saveScrollPosition(window.scrollX, window.scrollY);
-      });
+      saveScrollPosition(window.scrollX, window.scrollY);
     },
     { passive: true },
   );
