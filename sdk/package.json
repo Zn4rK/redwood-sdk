@@ -1,6 +1,6 @@
 {
   "name": "rwsdk",
-  "version": "1.2.4",
+  "version": "1.2.12",
   "description": "Build fast, server-driven webapps on Cloudflare with SSR, RSC, and realtime",
   "type": "module",
   "bin": {
@@ -154,7 +154,7 @@
   "license": "MIT",
   "dependencies": {
     "@ast-grep/napi": "~0.42.1",
-    "@cloudflare/workers-types": "~4.20260405.1",
+    "@cloudflare/workers-types": "~4.20260426.1",
     "@mdx-js/mdx": "~3.1.1",
     "@puppeteer/browsers": "~2.13.0",
     "@types/decompress": "~4.2.7",
@@ -163,12 +163,12 @@
     "@types/react": "~19.2.14",
     "@types/react-dom": "~19.2.3",
     "@types/react-is": "~19.2.0",
-    "@vitejs/plugin-react": "~6.0.1",
+    "@vitejs/plugin-react": "~5.1.4",
     "chokidar": "~5.0.0",
     "debug": "~4.4.3",
     "decompress": "~4.2.1",
-    "enhanced-resolve": "~5.20.1",
-    "eventsource-parser": "~3.0.6",
+    "enhanced-resolve": "~5.21.0",
+    "eventsource-parser": "~3.0.8",
     "execa": "~9.6.1",
     "find-up": "~8.0.0",
     "fs-extra": "~11.3.4",
@@ -188,9 +188,10 @@
     "rsc-html-stream": "~0.0.7",
     "server-only": "^0.0.1",
     "tmp-promise": "~3.0.3",
-    "ts-morph": "~27.0.2",
+    "ts-morph": "~28.0.0",
     "unique-names-generator": "~4.7.1",
-    "vibe-rules": "~0.3.91"
+    "vibe-rules": "~0.3.91",
+    "vite-tsconfig-paths": "~6.1.1"
   },
   "peerDependencies": {
     "@cloudflare/vite-plugin": "^1.26.1",
@@ -198,7 +199,7 @@
     "react": ">=19.2.0-0 <19.3.0 || >=19.3.0-0 <20.0.0",
     "react-dom": ">=19.2.0-0 <19.3.0 || >=19.3.0-0 <20.0.0",
     "react-server-dom-webpack": ">=19.2.0-0 <19.3.0 || >=19.3.0-0 <20.0.0",
-    "vite": "^6.2.6 || 7.x || 8.x",
+    "vite": "^6.2.6 || 7.x",
     "wrangler": "^4.77.0"
   },
   "peerDependenciesMeta": {
@@ -208,17 +209,17 @@
   },
   "packageManager": "pnpm@10.31.0",
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.31.0",
-    "wrangler": "^4.80.0",
+    "@cloudflare/vite-plugin": "1.33.2",
+    "wrangler": "^4.85.0",
     "capnweb": "~0.5.0",
     "@types/debug": "~4.1.13",
     "@types/lodash": "~4.17.24",
-    "@types/node": "~25.3.5",
+    "@types/node": "~25.6.0",
     "@types/proper-lockfile": "~4.1.4",
     "semver": "~7.7.4",
     "tsx": "~4.21.0",
-    "typescript": "~6.0.2",
-    "vite": "~8.0.9",
-    "vitest": "~4.1.2"
+    "typescript": "~6.0.3",
+    "vite": "~7.3.5",
+    "vitest": "~4.1.5"
   }
 }
