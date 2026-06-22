@@ -345,9 +345,18 @@ export async function copyProjectToTempDir(
         JSON.stringify(pkgJson, null, 2),
       );
 
-      const viteConfigPath = join(targetDir, "vite.config.mts");
-      if (await pathExists(viteConfigPath)) {
-        log("Patching vite.config.mts to include @vitejs/plugin-react");
+      const viteConfigExtensions = [".mts", ".ts", ".js", ".mjs", ".cjs"];
+      let viteConfigPath: string | undefined;
+      for (const ext of viteConfigExtensions) {
+        const candidate = join(targetDir, `vite.config${ext}`);
+        if (await pathExists(candidate)) {
+          viteConfigPath = candidate;
+          break;
+        }
+      }
+
+      if (viteConfigPath) {
+        log("Patching %s to include @vitejs/plugin-react", basename(viteConfigPath));
         let viteConfig = await fs.promises.readFile(viteConfigPath, "utf-8");
         if (!viteConfig.includes("@vitejs/plugin-react")) {
           viteConfig = `import react from "@vitejs/plugin-react";\n${viteConfig}`;
