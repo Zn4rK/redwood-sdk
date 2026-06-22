@@ -80,9 +80,12 @@ function translateBuildOptions(build: any) {
     return;
   }
 
-  build.rollupOptions ??= {};
   const rolldownOptions = build.rolldownOptions;
-  const rollupOptions = build.rollupOptions;
+  // context(justinvdm, 2026-06-22): Start from a fresh rollupOptions object.
+  // Vite 7's environment config merge can share nested output objects across
+  // environments, so inheriting an existing rollupOptions.output would cause
+  // SSR's entryFileNames to leak into the client build.
+  const rollupOptions: any = { ...build.rollupOptions };
 
   for (const key of Object.keys(rolldownOptions)) {
     if (key === "output") {
@@ -91,6 +94,8 @@ function translateBuildOptions(build: any) {
       rollupOptions[key] = rolldownOptions[key];
     }
   }
+
+  build.rollupOptions = rollupOptions;
 
   build.rolldownOptions = createRolldownOptionsProxy(
     rolldownOptions,
@@ -120,7 +125,12 @@ function translateLibOptions(build: any) {
   build.rollupOptions.input = build.lib.entry;
 
   if (build.lib.fileName) {
-    build.rollupOptions.output ??= {};
+    // context(justinvdm, 2026-06-22): Vite 7's environment config merge can
+    // share the same output object across environments. Create a new object
+    // so SSR's entryFileNames do not leak into the client build.
+    build.rollupOptions.output = {
+      ...(build.rollupOptions.output ?? {}),
+    };
     const fileName =
       typeof build.lib.fileName === "function"
         ? build.lib.fileName()
