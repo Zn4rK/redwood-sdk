@@ -72,7 +72,16 @@ jobs:
           npx playwright@1.60.0 install --with-deps chromium
 
       - name: Install dependencies
-        run: pnpm install
+        run: |
+          ulimit -n 65536
+          # agent-ci reuses the workspace volume across runs, so stale or
+          # partially-written node_modules can persist. Empty them to avoid
+          # "Already up to date" reports against corrupted files.
+          find . -type d -name node_modules -prune -print0 | \
+            while IFS= read -r -d '' dir; do \
+              find "$dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +; \
+            done
+          pnpm install
 
       - name: Setup .npmrc for publishing
         working-directory: sdk
