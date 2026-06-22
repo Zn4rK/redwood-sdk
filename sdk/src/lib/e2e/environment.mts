@@ -188,6 +188,7 @@ export async function copyProjectToTempDir(
   packageManager?: PackageManager,
   monorepoRoot?: string,
   installDependenciesRetries?: number,
+  viteVersion?: number,
 ): Promise<{
   tempDir: tmp.DirectoryResult;
   targetDir: string;
@@ -329,6 +330,35 @@ export async function copyProjectToTempDir(
     }
 
     await setTarballDependency(targetDir, tarballFilename);
+
+    if (viteVersion === 7) {
+      log("Patching package.json for Vite 7 compatibility");
+      const pkgJsonPath = join(targetDir, "package.json");
+      const pkgJson = JSON.parse(
+        await fs.promises.readFile(pkgJsonPath, "utf-8"),
+      );
+      pkgJson.devDependencies ??= {};
+      pkgJson.devDependencies.vite = "~7.3.5";
+      pkgJson.devDependencies["@vitejs/plugin-react"] = "~5.1.4";
+      await fs.promises.writeFile(
+        pkgJsonPath,
+        JSON.stringify(pkgJson, null, 2),
+      );
+
+      const viteConfigPath = join(targetDir, "vite.config.mts");
+      if (await pathExists(viteConfigPath)) {
+        log("Patching vite.config.mts to include @vitejs/plugin-react");
+        let viteConfig = await fs.promises.readFile(viteConfigPath, "utf-8");
+        if (!viteConfig.includes("@vitejs/plugin-react")) {
+          viteConfig = `import react from "@vitejs/plugin-react";\n${viteConfig}`;
+          viteConfig = viteConfig.replace(
+            /plugins:\s*\[/,
+            "plugins: [\n    react(),",
+          );
+          await fs.promises.writeFile(viteConfigPath, viteConfig);
+        }
+      }
+    }
 
     // Install dependencies in the target directory
     const installDir = monorepoRoot ? tempCopyRoot : targetDir;

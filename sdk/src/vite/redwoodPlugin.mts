@@ -14,6 +14,7 @@ import { $ } from "../lib/$.mjs";
 import { findWranglerConfig } from "../lib/findWranglerConfig.mjs";
 import { hasPkgScript } from "../lib/hasPkgScript.mjs";
 import { cloudflarePreInitPlugin } from "./cloudflarePreInitPlugin.mjs";
+import { compatTransform } from "./viteCompat.mjs";
 import { configPlugin } from "./configPlugin.mjs";
 import { devServerTimingPlugin } from "./devServerTimingPlugin.mjs";
 import { directiveModulesDevPlugin } from "./directiveModulesDevPlugin.mjs";
@@ -133,7 +134,7 @@ export const redwoodPlugin = async (
     await $`npm run dev:init`;
   }
 
-  return [
+  const pluginResults = await Promise.all([
     staleDepRetryPlugin(),
     statePlugin({ projectRootDir }),
     devServerTimingPlugin(),
@@ -205,5 +206,11 @@ export const redwoodPlugin = async (
       serverFiles,
       projectRootDir,
     }),
-  ];
+  ]);
+
+  const flattenedPlugins = pluginResults.flat().filter(
+    (plugin): plugin is Plugin => plugin != null,
+  );
+
+  return compatTransform(flattenedPlugins);
 };
