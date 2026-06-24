@@ -24,6 +24,11 @@ interface OptimizeDepsPlugin {
     | { code: string; moduleType?: string };
 }
 
+const translatedOptimizeDepsPlugins = new WeakMap<
+  object,
+  WeakSet<OptimizeDepsPlugin>
+>();
+
 export function compatTransform(
   plugins: Plugin[],
   options?: CompatOptions,
@@ -49,6 +54,11 @@ function createVite7CompatPlugin(): Plugin {
       translateEnvironmentConfig(config as any);
     },
     configResolved(config) {
+      // context(justinvdm, 2026-06-24): Some plugins add optimizeDeps
+      // Rolldown plugins in configResolved after configEnvironment has run.
+      // Vite 7 still needs those late plugins translated before the esbuild
+      // optimizer runs, especially the dev vendor-barrel redirect plugin.
+      translateResolvedConfig(config);
       installRolldownProxies(config as any);
     },
   };
@@ -72,6 +82,19 @@ function translateEnvironmentConfig(config: any) {
   }
   if (config.build) {
     translateBuildOptions(config.build);
+  }
+}
+
+function translateResolvedConfig(config: any) {
+  translateRootConfig(config);
+
+  if (!config.environments) {
+    return;
+  }
+
+  for (const env of Object.values(config.environments)) {
+    translateEnvironmentConfig(env);
+    translateEnvironmentConfig((env as any).config);
   }
 }
 
@@ -191,8 +214,20 @@ function translateOptimizeDeps(optimizeDeps: any) {
 
   if (Array.isArray(rolldownOptions.plugins)) {
     esbuildOptions.plugins ??= [];
+
+    let translatedPlugins = translatedOptimizeDepsPlugins.get(optimizeDeps);
+    if (!translatedPlugins) {
+      translatedPlugins = new WeakSet<OptimizeDepsPlugin>();
+      translatedOptimizeDepsPlugins.set(optimizeDeps, translatedPlugins);
+    }
+
     for (const plugin of rolldownOptions.plugins) {
+      if (translatedPlugins.has(plugin)) {
+        continue;
+      }
+
       esbuildOptions.plugins.push(toEsbuildPlugin(plugin));
+      translatedPlugins.add(plugin);
     }
   }
 }
@@ -213,11 +248,7 @@ function toEsbuildPlugin(rolldownPlugin: OptimizeDepsPlugin): any {
             return undefined;
           }
 
-          if (typeof result === "string") {
-            return { path: result };
-          }
-
-          const id = result.id ?? args.path;
+          const id = typeof result === "string" ? result : result.id ?? args.path;
           const hasNullPrefix = id.startsWith("\0");
           const namespace = hasNullPrefix ? rolldownPlugin.name : undefined;
           const path = hasNullPrefix ? id.slice(1) : id;
@@ -225,7 +256,7 @@ function toEsbuildPlugin(rolldownPlugin: OptimizeDepsPlugin): any {
           return {
             path,
             namespace,
-            external: result.external,
+            external: typeof result === "string" ? undefined : result.external,
           };
         });
       }

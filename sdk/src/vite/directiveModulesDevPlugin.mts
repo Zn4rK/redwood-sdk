@@ -76,6 +76,7 @@ export const directiveModulesDevPlugin = ({
     resolve: resolveScanPromise,
     reject: rejectScanPromise,
   } = Promise.withResolvers<void>();
+  let isServe = false;
 
   const tempDir = mkdtempSync(path.join(realpathSync(os.tmpdir()), "rwsdk-"));
   const APP_CLIENT_BARREL_PATH = path.join(tempDir, "app-client-barrel.js");
@@ -94,9 +95,132 @@ export const directiveModulesDevPlugin = ({
     server: VENDOR_SERVER_BARREL_PATH,
   });
 
+  const appBarrelPaths = [APP_CLIENT_BARREL_PATH, APP_SERVER_BARREL_PATH];
+  const slugifyOptimizeEntry = (id: string) =>
+    id.replaceAll("/", "_").replaceAll(".", "__");
+  const VENDOR_CLIENT_BARREL_OPTIMIZED_ID = slugifyOptimizeEntry(
+    VENDOR_CLIENT_BARREL_EXPORT_PATH,
+  );
+  const VENDOR_SERVER_BARREL_OPTIMIZED_ID = slugifyOptimizeEntry(
+    VENDOR_SERVER_BARREL_EXPORT_PATH,
+  );
+  const escapeRegExp = (s: string) =>
+    s.replace(/[\\^$*+?.()|[\]{}]/g, "\\$&");
+  const appBarrelFilter = new RegExp(
+    `(${appBarrelPaths.map(escapeRegExp).join("|")})$`,
+  );
+  const BARREL_PREFIX = "\0rwsdk-app-barrel:";
+
+  const createAppBarrelBlockerPlugin = () => ({
+    name: "rwsdk:app-barrel-blocker",
+    async resolveId(id: string) {
+      await scanPromise;
+
+      // Handle stable vendor barrel specifiers by redirecting them to
+      // the in-memory temp barrel files. This lets Vite rewrite the
+      // specifier to its optimized dependency bundle while still serving
+      // our generated content.
+      const isClientBarrelPath =
+        id === VENDOR_CLIENT_BARREL_EXPORT_PATH ||
+        id === VENDOR_CLIENT_BARREL_OPTIMIZED_ID ||
+        id === SDK_VENDOR_CLIENT_BARREL_PATH ||
+        id.endsWith("/__vendor_client_barrel.dev-virtual.js");
+      const isServerBarrelPath =
+        id === VENDOR_SERVER_BARREL_EXPORT_PATH ||
+        id === VENDOR_SERVER_BARREL_OPTIMIZED_ID ||
+        id === SDK_VENDOR_SERVER_BARREL_PATH ||
+        id.endsWith("/__vendor_server_barrel.dev-virtual.js");
+
+      if (isClientBarrelPath) {
+        return VENDOR_CLIENT_BARREL_PATH;
+      }
+      if (isServerBarrelPath) {
+        return VENDOR_SERVER_BARREL_PATH;
+      }
+
+      // Handle app barrel files
+      if (appBarrelFilter.test(id)) {
+        return `${BARREL_PREFIX}${id}`;
+      }
+
+      // context(justinvdm, 11 Sep 2025): Prevent Vite from
+      // externalizing our application files. If we don't, paths
+      // imported in our application barrel files will be marked as
+      // external, and thus not scanned for dependencies.
+      if (
+        id.startsWith("/") &&
+        (id.includes("/src/") || id.includes("/generated/")) &&
+        !id.includes("node_modules")
+      ) {
+        return id;
+      }
+    },
+    load(id: string) {
+      // Handle vendor barrels
+      if (
+        id === VENDOR_CLIENT_BARREL_PATH ||
+        id === VENDOR_SERVER_BARREL_PATH
+      ) {
+        const isServerBarrel = id.includes("server-barrel");
+        const files = isServerBarrel ? serverFiles : clientFiles;
+        return generateVendorBarrelContent(files, projectRootDir);
+      }
+
+      // Handle app barrels
+      if (id.startsWith(BARREL_PREFIX)) {
+        const barrelPath = id.slice(BARREL_PREFIX.length);
+        const isServerBarrel = barrelPath.includes("app-server-barrel");
+        const files = isServerBarrel ? serverFiles : clientFiles;
+        return generateAppBarrelContent(files, projectRootDir);
+      }
+    },
+  });
+
+  const addUnique = (items: string[], value: string) => {
+    if (!items.includes(value)) {
+      items.push(value);
+    }
+  };
+
+  const configureOptimizeDeps = (envName: string, env: any) => {
+    env.optimizeDeps ??= {};
+    env.optimizeDeps.include ??= [];
+    addUnique(env.optimizeDeps.include, VENDOR_CLIENT_BARREL_EXPORT_PATH);
+    addUnique(env.optimizeDeps.include, VENDOR_SERVER_BARREL_EXPORT_PATH);
+
+    const entries = (env.optimizeDeps.entries = castArray(
+      env.optimizeDeps.entries ?? [],
+    ));
+    addUnique(entries, VENDOR_CLIENT_BARREL_EXPORT_PATH);
+    addUnique(entries, VENDOR_SERVER_BARREL_EXPORT_PATH);
+
+    if (envName === "client" || envName === "ssr") {
+      addUnique(entries, APP_CLIENT_BARREL_PATH);
+    } else if (envName === "worker") {
+      addUnique(entries, APP_SERVER_BARREL_PATH);
+    }
+
+    env.optimizeDeps.rolldownOptions ??= {};
+    env.optimizeDeps.rolldownOptions.plugins ??= [];
+
+    if (
+      !env.optimizeDeps.rolldownOptions.plugins.some(
+        (plugin: { name?: string }) => plugin.name === "rwsdk:app-barrel-blocker",
+      )
+    ) {
+      env.optimizeDeps.rolldownOptions.plugins.unshift(
+        createAppBarrelBlockerPlugin(),
+      );
+    }
+  };
+
   return {
     name: "rwsdk:directive-modules-dev",
     enforce: "pre",
+
+    config(_, { command }) {
+      isServe = command === "serve";
+    },
 
     load(id) {
       const isClientBarrel =
@@ -157,6 +281,18 @@ export const directiveModulesDevPlugin = ({
       });
     },
 
+    configEnvironment(envName, env) {
+      if (!isServe) {
+        return;
+      }
+
+      // context(justinvdm, 2026-06-24): Configure optimizer entries during
+      // configEnvironment, not configResolved. Vite 7 snapshots esbuild
+      // optimizeDeps before configResolved mutations, so late vendor-barrel
+      // redirects do not reach the dependency scanner.
+      configureOptimizeDeps(envName, env);
+    },
+
     configResolved(config) {
       if (config.command !== "serve") {
         resolveScanPromise();
@@ -172,111 +308,6 @@ export const directiveModulesDevPlugin = ({
       writeFileSync(VENDOR_CLIENT_BARREL_PATH, "");
       mkdirSync(path.dirname(VENDOR_SERVER_BARREL_PATH), { recursive: true });
       writeFileSync(VENDOR_SERVER_BARREL_PATH, "");
-
-      for (const [envName, env] of Object.entries(config.environments || {})) {
-        env.optimizeDeps ??= {};
-        env.optimizeDeps.include ??= [];
-        env.optimizeDeps.include.push(
-          VENDOR_CLIENT_BARREL_EXPORT_PATH,
-          VENDOR_SERVER_BARREL_EXPORT_PATH,
-        );
-        const entries = (env.optimizeDeps.entries = castArray(
-          env.optimizeDeps.entries ?? [],
-        ));
-        entries.push(
-          VENDOR_CLIENT_BARREL_EXPORT_PATH,
-          VENDOR_SERVER_BARREL_EXPORT_PATH,
-        );
-
-        if (envName === "client" || envName === "ssr") {
-          entries.push(APP_CLIENT_BARREL_PATH);
-        } else if (envName === "worker") {
-          entries.push(APP_SERVER_BARREL_PATH);
-        }
-
-        const appBarrelPaths = [
-          APP_CLIENT_BARREL_PATH,
-          APP_SERVER_BARREL_PATH,
-        ];
-        const vendorBarrelPaths = [
-          VENDOR_CLIENT_BARREL_PATH,
-          VENDOR_SERVER_BARREL_PATH,
-        ];
-        const escapeRegExp = (s: string) =>
-          s.replace(/[\\^$*+?.()|[\]{}]/g, "\\$&");
-        const appBarrelFilter = new RegExp(
-          `(${appBarrelPaths.map(escapeRegExp).join("|")})$`,
-        );
-        const vendorBarrelFilter = new RegExp(
-          `(${vendorBarrelPaths.map(escapeRegExp).join("|")})$`,
-        );
-        const BARREL_PREFIX = "\0rwsdk-app-barrel:";
-
-        env.optimizeDeps.rolldownOptions ??= {};
-        (env.optimizeDeps.rolldownOptions as any).plugins ??= [];
-        ((env.optimizeDeps.rolldownOptions as any).plugins as any[]).unshift({
-          name: "rwsdk:app-barrel-blocker",
-          async resolveId(id: string) {
-            await scanPromise;
-
-            // Handle stable vendor barrel specifiers by redirecting them to
-            // the in-memory temp barrel files. This lets Vite rewrite the
-            // specifier to its optimized dependency bundle while still serving
-            // our generated content.
-            const isClientBarrelPath =
-              id === VENDOR_CLIENT_BARREL_EXPORT_PATH ||
-              id === SDK_VENDOR_CLIENT_BARREL_PATH ||
-              id.endsWith("/__vendor_client_barrel.dev-virtual.js");
-            const isServerBarrelPath =
-              id === VENDOR_SERVER_BARREL_EXPORT_PATH ||
-              id === SDK_VENDOR_SERVER_BARREL_PATH ||
-              id.endsWith("/__vendor_server_barrel.dev-virtual.js");
-
-            if (isClientBarrelPath) {
-              return VENDOR_CLIENT_BARREL_PATH;
-            }
-            if (isServerBarrelPath) {
-              return VENDOR_SERVER_BARREL_PATH;
-            }
-
-            // Handle app barrel files
-            if (appBarrelFilter.test(id)) {
-              return `${BARREL_PREFIX}${id}`;
-            }
-
-            // context(justinvdm, 11 Sep 2025): Prevent Vite from
-            // externalizing our application files. If we don't, paths
-            // imported in our application barrel files will be marked as
-            // external, and thus not scanned for dependencies.
-            if (
-              id.startsWith("/") &&
-              (id.includes("/src/") || id.includes("/generated/")) &&
-              !id.includes("node_modules")
-            ) {
-              return id;
-            }
-          },
-          load(id: string) {
-            // Handle vendor barrels
-            if (
-              id === VENDOR_CLIENT_BARREL_PATH ||
-              id === VENDOR_SERVER_BARREL_PATH
-            ) {
-              const isServerBarrel = id.includes("server-barrel");
-              const files = isServerBarrel ? serverFiles : clientFiles;
-              return generateVendorBarrelContent(files, projectRootDir);
-            }
-
-            // Handle app barrels
-            if (id.startsWith(BARREL_PREFIX)) {
-              const barrelPath = id.slice(BARREL_PREFIX.length);
-              const isServerBarrel = barrelPath.includes("app-server-barrel");
-              const files = isServerBarrel ? serverFiles : clientFiles;
-              return generateAppBarrelContent(files, projectRootDir);
-            }
-          },
-        });
-      }
     },
   };
 };
