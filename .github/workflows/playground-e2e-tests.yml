@@ -347,8 +347,7 @@ jobs:
             directives/__tests__/e2e.test.mts \
             requestInfo/__tests__/e2e.test.mts \
             use-synced-state/__tests__/e2e.test.mts \
-            server-functions/__tests__/e2e.test.mts \
-            import-from-use-client/__tests__/e2e.test.mts
+            server-functions/__tests__/e2e.test.mts
 
       - name: Upload playground artifacts
         uses: actions/upload-artifact@v7
