@@ -76,8 +76,6 @@ export const directiveModulesDevPlugin = ({
     resolve: resolveScanPromise,
     reject: rejectScanPromise,
   } = Promise.withResolvers<void>();
-  let isServe = false;
-
   const tempDir = mkdtempSync(path.join(realpathSync(os.tmpdir()), "rwsdk-"));
   const APP_CLIENT_BARREL_PATH = path.join(tempDir, "app-client-barrel.js");
   const APP_SERVER_BARREL_PATH = path.join(tempDir, "app-server-barrel.js");
@@ -218,10 +216,6 @@ export const directiveModulesDevPlugin = ({
     name: "rwsdk:directive-modules-dev",
     enforce: "pre",
 
-    config(_, { command }) {
-      isServe = command === "serve";
-    },
-
     load(id) {
       const isClientBarrel =
         id === VENDOR_CLIENT_BARREL_EXPORT_PATH ||
@@ -281,18 +275,6 @@ export const directiveModulesDevPlugin = ({
       });
     },
 
-    configEnvironment(envName, env) {
-      if (!isServe) {
-        return;
-      }
-
-      // context(justinvdm, 2026-06-24): Configure optimizer entries during
-      // configEnvironment, not configResolved. Vite 7 snapshots esbuild
-      // optimizeDeps before configResolved mutations, so late vendor-barrel
-      // redirects do not reach the dependency scanner.
-      configureOptimizeDeps(envName, env);
-    },
-
     configResolved(config) {
       if (config.command !== "serve") {
         resolveScanPromise();
@@ -308,6 +290,10 @@ export const directiveModulesDevPlugin = ({
       writeFileSync(VENDOR_CLIENT_BARREL_PATH, "");
       mkdirSync(path.dirname(VENDOR_SERVER_BARREL_PATH), { recursive: true });
       writeFileSync(VENDOR_SERVER_BARREL_PATH, "");
+
+      for (const [envName, env] of Object.entries(config.environments || {})) {
+        configureOptimizeDeps(envName, env);
+      }
     },
   };
 };
