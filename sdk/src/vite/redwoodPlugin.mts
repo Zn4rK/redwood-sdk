@@ -44,6 +44,10 @@ export type RedwoodPluginOptions = {
   configPath?: string;
   forceClientPaths?: string[];
   forceServerPaths?: string[];
+  /** Matched node_modules client/server modules are served from source in the
+   * directive lookup map instead of the prebundled vendor barrel. Resolved with
+   * the same pipeline as forceClientPaths. */
+  forceSourcePaths?: string[];
   entry?: {
     worker?: string;
   };
@@ -100,6 +104,18 @@ export const redwoodPlugin = async (
     }
   }
 
+  // Serve matched node_modules client/server modules from source, not the vendor barrel.
+  const forceSourcePaths = new Set<string>();
+  if (options.forceSourcePaths) {
+    const sourcePaths = await resolveForcedPaths({
+      patterns: options.forceSourcePaths,
+      projectRootDir,
+    });
+    for (const p of sourcePaths) {
+      forceSourcePaths.add(p);
+    }
+  }
+
   const workerConfigPath =
     options.configPath ??
     (process.env.RWSDK_WRANGLER_CONFIG
@@ -145,6 +161,7 @@ export const redwoodPlugin = async (
       projectRootDir,
       workerEntryPathname,
       esbuildOptions,
+      forceSourcePaths,
     }),
     configPlugin({
       silent: options.silent ?? false,
@@ -191,10 +208,12 @@ export const redwoodPlugin = async (
     useClientLookupPlugin({
       projectRootDir,
       clientFiles,
+      forceSourcePaths,
     }),
     useServerLookupPlugin({
       projectRootDir,
       serverFiles,
+      forceSourcePaths,
     }),
     transformJsxScriptTagsPlugin({
       clientEntryPoints,

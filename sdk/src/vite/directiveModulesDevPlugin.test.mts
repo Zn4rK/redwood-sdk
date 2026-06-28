@@ -36,6 +36,22 @@ export default {
       const content = generateVendorBarrelContent(files, projectRootDir);
       expect(content).toEqual("\n\nexport default {\n\n};");
     });
+
+    it("should exclude files passed in the skip set", () => {
+      const files = new Set([
+        "node_modules/lib-a/index.js",
+        "node_modules/lib-b/component.tsx",
+      ]);
+      const skip = new Set(["node_modules/lib-a/index.js"]);
+      const content = generateVendorBarrelContent(files, projectRootDir, skip);
+      const expected = `import * as M0 from '${projectRootDir}/node_modules/lib-b/component.tsx';
+
+export default {
+  '/node_modules/lib-b/component.tsx': M0,
+};`;
+      expect(content).toEqual(expected);
+      expect(content).not.toContain("lib-a");
+    });
   });
 
   describe("generateAppBarrelContent", () => {

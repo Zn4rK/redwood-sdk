@@ -19,9 +19,11 @@ import {
 export const generateVendorBarrelContent = (
   files: Set<string>,
   projectRootDir: string,
+  // Files served from source are excluded from the vendor barrel.
+  skip: Set<string> = new Set(),
 ) => {
   const imports = [...files]
-    .filter((file) => file.includes("node_modules"))
+    .filter((file) => file.includes("node_modules") && !skip.has(file))
     .map(
       (file, i) =>
         `import * as M${i} from '${normalizeModulePath(file, projectRootDir, {
@@ -33,7 +35,7 @@ export const generateVendorBarrelContent = (
   const exports =
     "export default {\n" +
     [...files]
-      .filter((file) => file.includes("node_modules"))
+      .filter((file) => file.includes("node_modules") && !skip.has(file))
       .map(
         (file, i) => `  '${normalizeModulePath(file, projectRootDir)}': M${i},`,
       )
@@ -64,12 +66,14 @@ export const directiveModulesDevPlugin = ({
   projectRootDir,
   workerEntryPathname,
   esbuildOptions,
+  forceSourcePaths = new Set(),
 }: {
   clientFiles: Set<string>;
   serverFiles: Set<string>;
   projectRootDir: string;
   workerEntryPathname: string;
   esbuildOptions: ConfigurableEsbuildOptions;
+  forceSourcePaths?: Set<string>;
 }): Plugin => {
   const {
     promise: scanPromise,
@@ -161,7 +165,7 @@ export const directiveModulesDevPlugin = ({
       ) {
         const isServerBarrel = id.includes("server-barrel");
         const files = isServerBarrel ? serverFiles : clientFiles;
-        return generateVendorBarrelContent(files, projectRootDir);
+        return generateVendorBarrelContent(files, projectRootDir, forceSourcePaths);
       }
 
       // Handle app barrels
@@ -225,10 +229,18 @@ export const directiveModulesDevPlugin = ({
         id === SDK_VENDOR_SERVER_BARREL_PATH;
 
       if (isClientBarrel) {
-        return generateVendorBarrelContent(clientFiles, projectRootDir);
+        return generateVendorBarrelContent(
+          clientFiles,
+          projectRootDir,
+          forceSourcePaths,
+        );
       }
       if (isServerBarrel) {
-        return generateVendorBarrelContent(serverFiles, projectRootDir);
+        return generateVendorBarrelContent(
+          serverFiles,
+          projectRootDir,
+          forceSourcePaths,
+        );
       }
       return null;
     },
@@ -257,11 +269,19 @@ export const directiveModulesDevPlugin = ({
         .then(() => {
           writeFileSync(
             VENDOR_CLIENT_BARREL_PATH,
-            generateVendorBarrelContent(clientFiles, projectRootDir),
+            generateVendorBarrelContent(
+              clientFiles,
+              projectRootDir,
+              forceSourcePaths,
+            ),
           );
           writeFileSync(
             VENDOR_SERVER_BARREL_PATH,
-            generateVendorBarrelContent(serverFiles, projectRootDir),
+            generateVendorBarrelContent(
+              serverFiles,
+              projectRootDir,
+              forceSourcePaths,
+            ),
           );
           resolveScanPromise();
         })

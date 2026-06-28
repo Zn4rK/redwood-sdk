@@ -53,4 +53,21 @@ describe("generateLookupMap", () => {
       `"node_modules/lib-a/index.js": () => import("node_modules/lib-a/index.js")`,
     );
   });
+
+  it("should serve a forceSourcePaths node_modules file from source in dev", () => {
+    const result = generateLookupMap({
+      files,
+      isDev: true,
+      kind: "client",
+      exportName: "clientLookup",
+      forceSourcePaths: new Set(["node_modules/lib-a/index.js"]),
+    });
+
+    expect(result.code).toContain(
+      `"node_modules/lib-a/index.js": () => import("node_modules/lib-a/index.js")`,
+    );
+    expect(result.code).not.toContain(
+      `"node_modules/lib-a/index.js": () => import("${VENDOR_CLIENT_BARREL_EXPORT_PATH}")`,
+    );
+  });
 });

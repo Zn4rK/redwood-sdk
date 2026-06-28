@@ -78,7 +78,8 @@ export const directivesPlugin = ({
       ) {
         return;
       }
-      const normalizedId = normalizeModulePath(id, projectRootDir);
+      // Strip the optimizer `?v=<hash>` so source-served modules register under their plain path.
+      const normalizedId = normalizeModulePath(id.split("?")[0], projectRootDir);
 
       const clientResult = await transformClientComponents(code, normalizedId, {
         environmentName: this.environment.name,

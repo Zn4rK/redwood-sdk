@@ -13,17 +13,21 @@ export function generateLookupMap({
   isDev,
   kind,
   exportName,
+  forceSourcePaths,
 }: {
   files: Set<string>;
   isDev: boolean;
   kind: "client" | "server";
   exportName: string;
+  forceSourcePaths?: Set<string>;
 }) {
+  // Matched node_modules modules are served from source, not the vendor barrel.
+  const sourceSet = forceSourcePaths ?? new Set<string>();
   const s = new MagicString(`
 export const ${exportName} = {
   ${Array.from(files)
     .map((file: string) => {
-      if (file.includes("node_modules") && isDev) {
+      if (file.includes("node_modules") && isDev && !sourceSet.has(file)) {
         const barrelPath =
           kind === "client"
             ? VENDOR_CLIENT_BARREL_EXPORT_PATH
@@ -61,10 +65,12 @@ export const createDirectiveLookupPlugin = async ({
   projectRootDir,
   files,
   config,
+  forceSourcePaths,
 }: {
   projectRootDir: string;
   files: Set<string>;
   config: DirectiveLookupConfig;
+  forceSourcePaths?: Set<string>;
 }): Promise<Plugin> => {
   const debugNamespace = `rwsdk:vite:${config.pluginName}`;
   const log = debug(debugNamespace);
@@ -227,6 +233,7 @@ export const createDirectiveLookupPlugin = async ({
           isDev,
           kind: config.kind,
           exportName: config.exportName,
+          forceSourcePaths,
         });
       }
     },
